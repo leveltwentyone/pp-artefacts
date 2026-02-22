@@ -1,0 +1,45 @@
+{
+    "EnvironmentVariables": [
+      {
+        "SchemaName": "msdyn_IncidentShouldValidatePrimaryContact",
+        "Value": 0
+      }
+    ],
+    "ConnectionReferences": [
+      {
+        "LogicalName": "lvl_dataverse",
+        "ConnectionId": "f992046dfe9a4fdea5dd226cfcc3ecc6",
+        "ConnectorId": "/providers/Microsoft.PowerApps/apis/shared_commondataserviceforapps"
+      },
+      {
+        "LogicalName": "lvl_sharepoint",
+        "ConnectionId": "8eeae5c8eaf34c7f92bcfadef07d3159",
+        "ConnectorId": "/providers/Microsoft.PowerApps/apis/shared_sharepointonline"
+      },
+      {
+        "LogicalName": "lvl_excelonlinebusiness",
+        "ConnectionId": "83417ea16046493383c7f6535b83f5ce",
+        "ConnectorId": "/providers/Microsoft.PowerApps/apis/shared_excelonlinebusiness"
+      },
+      {
+        "LogicalName": "lvl_wordonlinebusiness",
+        "ConnectionId": "64382bd97d664c82826a8d7af3675601",
+        "ConnectorId": "/providers/Microsoft.PowerApps/apis/shared_wordonlinebusiness"
+      },
+      {
+        "LogicalName": "lvl_microsoftentraid",
+        "ConnectionId": "6665daf036ca429cb08731b4902506e0",
+        "ConnectorId": "/providers/Microsoft.PowerApps/apis/shared_azuread"
+      },
+      {
+        "LogicalName": "lvl_powerplatformforadmins",
+        "ConnectionId": "a05e5b1cf08a42e29771b172f1b072e9",
+        "ConnectorId": "/providers/Microsoft.PowerApps/apis/shared_powerplatformforadmins"
+      },
+      {
+        "LogicalName": "lvl_office365outlook",
+        "ConnectionId": "895c4ba9816448078c507be0a0a25f27",
+        "ConnectorId": "/providers/Microsoft.PowerApps/apis/shared_office365"
+      }
+    ]
+  }

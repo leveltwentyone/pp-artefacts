@@ -1,0 +1,136 @@
+name: Build ProjectSolution
+on:
+  workflow_run:
+    workflows: ["Set solution version for Project Solutions (auto-discovery)"]
+    types:
+      - completed
+  workflow_dispatch:
+    inputs:  
+      enable_debugging:
+        description: 'Enable Debugging?'
+        required: true
+        default: "false"
+        type: choice
+        options:
+          - true
+          - false
+
+jobs:
+  validate-connections:
+    name: 🔌 Validate Settings & Connections [${{ matrix.environment }}]
+    if: ${{ github.event_name == 'workflow_dispatch' || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main') }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false       # run checks for all environments even if one fails
+      matrix:
+        include:
+          - environment: TEST
+    environment: ${{ matrix.environment }}   
+
+    permissions:
+      id-token: write    # required for --githubFederated
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Power Platform Tools
+        uses: microsoft/powerplatform-actions/actions-install@v1
+        with:
+          add-tools-to-path: true
+
+      - name: Connect pac CLI
+        shell: pwsh
+        # Connect to Dataverse using the provided federated credentials (Power Platform CLI)
+        run: |
+          ./.github/workflows/Tooling/connectPacCLI.ps1 `
+            -environmenturl "${{ vars.DATAVERSE_ENVIRONMENT_URL }}" `
+            -clientid       "${{ secrets.CLIENT_ID }}" `
+            -tenantid       "${{ secrets.TENANT_ID }}"
+
+      - name: ✅ Validate Solution → Deployment Settings
+        shell: pwsh
+        run: |
+          ./.github/workflows/Tooling/validate-SolutionComponentsVsSettings.ps1 `
+            -MappingFile "./Solutions/Configuration/solution-mappings.json" `
+            -Environment  "${{ matrix.environment }}"
+
+      - name: ✅ Validate Connections vs. Environment
+        shell: pwsh
+        run: |
+          ./.github/workflows/Tooling/validate-SettingsVsEnvironments.ps1 `
+            -MappingFile  "./Solutions/Configuration/solution-mappings.json" `
+            -Environment  "${{ matrix.environment }}"
+
+  Build:
+    needs: validate-connections
+    runs-on: windows-latest
+    env:
+      ACTIONS_STEP_DEBUG: ${{ github.event.inputs.enable_debugging }}
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Power Platform Tools
+        uses: microsoft/powerplatform-actions/actions-install@v1
+        with:
+          add-tools-to-path: true
+
+      - name: Create directory
+        run: New-Item -ItemType Directory -Path "${{ runner.temp }}\packed"
+
+      - name: Extract solution versions
+        id: extract_versions
+        shell: pwsh
+        # Extract version numbers from local solution folders into RUNNER_TEMP/packed/solution-versions.json
+        run: |
+          pwsh -File ./.github/workflows/Tooling/extract-solution-versions.ps1
+
+      # add here all steps to build your custom code, e.g. build SPFx solutions, PCF controls, etc.
+
+      - name: Pack Project Solution managed
+        uses: microsoft/powerplatform-actions/pack-solution@v1
+        with:
+          solution-file: '${{runner.temp}}/packed/ProjectSolution_managed.zip'
+          solution-folder: 'Solutions/ProjectSolutions/ProjectSolution'
+          solution-type: 'Managed'      
+          map-file: './Solutions/Configuration/projectsolution.xml'
+      
+      - name: Pack Second Solution managed
+        uses: microsoft/powerplatform-actions/pack-solution@v1
+        with:
+          solution-file: '${{runner.temp}}/packed/SecondSolution_managed.zip'
+          solution-folder: 'Solutions/ProjectSolutions/SecondSolution'
+          solution-type: 'Managed'
+
+      - name: Pack Project Solution unmanaged
+        uses: microsoft/powerplatform-actions/pack-solution@v1
+        with:
+          solution-file: '${{runner.temp}}/packed/ProjectSolution.zip'
+          solution-folder: 'Solutions/ProjectSolutions/ProjectSolution'
+          solution-type: 'Unmanaged'      
+          map-file: './Solutions/Configuration/projectsolution.xml'
+      
+      - name: Pack SecondSolution Solution unmanaged
+        uses: microsoft/powerplatform-actions/pack-solution@v1
+        with:
+          solution-file: '${{runner.temp}}/packed/SecondSolution.zip'
+          solution-folder: 'Solutions/ProjectSolutions/SecondSolution'
+          solution-type: 'Unmanaged'  
+
+      - name: Copy files to artifact directory
+        run: |
+          New-Item -ItemType Directory -Path "${{ runner.temp }}\packed\Tooling"
+          Copy-Item -Path .\.github\workflows\Tooling\connectPacCLI.ps1 -Destination "${{ runner.temp }}\packed\Tooling\"
+          Copy-Item -Path .\.github\workflows/Tooling/compare-solution-versions.ps1 ${{ runner.temp }}/packed/Tooling/
+          cp ./Solutions/Configuration/* ${{ runner.temp }}/packed/
+          
+      # Upload the packed solutions and tooling to the workflow artifacts
+      - name: Publish Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: drop
+          path: '${{ runner.temp }}/packed/**'
+          overwrite: true

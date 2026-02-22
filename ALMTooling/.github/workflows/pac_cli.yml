@@ -1,0 +1,44 @@
+name: pac CLI Check
+on:
+  workflow_dispatch:
+
+jobs:
+  DEV:
+    runs-on: ubuntu-latest
+    env:
+      ACTIONS_STEP_DEBUG: false
+    environment: HOTFIX
+    permissions:
+      contents: write
+      id-token: write
+      
+    steps:
+      - name: Checkout Original
+        uses: actions/checkout@v4
+
+      - name: Checkout
+        env:
+          GITHUB_ACTOR: ${{ github.actor }}
+        run: |
+          pwsh -File './.github/workflows/Tooling/git-checkout.ps1'
+
+      - name: Install PAC
+        uses: microsoft/powerplatform-actions/actions-install@v1
+        with:
+          add-tools-to-path: true
+        
+      - name: who-am-i action
+        uses: microsoft/powerplatform-actions/who-am-i@v1
+        with: 
+          environment-url: ${{ vars.DATAVERSE_ENVIRONMENT_URL }}
+          app-id: ${{ secrets.CLIENT_ID }}
+          tenant-id: ${{ secrets.TENANT_ID }}
+
+      - name: Connect pac CLI
+        run: |
+          pwsh -File "./.github/workflows/Tooling/connectPacCLI.ps1" -environmenturl "${{ vars.DATAVERSE_ENVIRONMENT_URL }}" -clientid "${{ secrets.CLIENT_ID }}" -tenantid "${{ secrets.TENANT_ID }}"
+
+      - name: List Solutions
+        run: |
+          echo "Check existing solutions"
+          pac solution list --json

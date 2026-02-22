@@ -1,0 +1,281 @@
+name: Set solution version for Project Solutions (auto-discovery)
+
+on:
+  push:
+    branches:
+      - main
+      - hotfix
+    paths:
+      - 'Solutions/ProjectSolutions/**'
+  workflow_dispatch:
+    inputs:
+      forceUpdate:
+        description: "Force version bump for all solutions"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+  pull-requests: write
+  actions: write
+
+jobs:
+  update-versions:
+    runs-on: ubuntu-latest
+    env:
+      RUN_NUMBER: ${{ github.run_number }}
+      FORCE_UPDATE: ${{ github.event.inputs.forceUpdate || 'false' }}
+      SOLUTIONS_BASE_PATH: 'Solutions/ProjectSolutions'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Discover and detect changed solutions
+        id: detect
+        run: |
+          set -euo pipefail
+          
+          BEFORE="${{ github.event.before }}"
+          AFTER="${{ github.sha }}"
+          
+          # Fallback for initial push
+          if [ -z "$BEFORE" ] || [ "$BEFORE" = "0000000000000000000000000000000000000000" ]; then
+            BEFORE="HEAD~1"
+          fi
+          
+          FORCE_UPDATE="${FORCE_UPDATE:-false}"
+          BASE_PATH="${SOLUTIONS_BASE_PATH}"
+          
+          echo "=== Discovering solutions in ${BASE_PATH} ==="
+          
+          # Find all directories in Solutions/ProjectSolutions/ that contain a Solution.xml
+          SOLS=()
+          if [ -d "$BASE_PATH" ]; then
+            while IFS= read -r sol_dir; do
+              # Extract solution name from the path
+              sol_name=$(basename "$sol_dir")
+              sol_xml_path="${sol_dir}/Other/Solution.xml"
+              
+              if [ -f "$sol_xml_path" ]; then
+                SOLS+=("${sol_name}|${sol_dir}|${sol_xml_path}")
+                echo "Found solution: ${sol_name} -> ${sol_xml_path}"
+              fi
+            done < <(find "$BASE_PATH" -mindepth 1 -maxdepth 1 -type d | sort)
+          fi
+          
+          if [ ${#SOLS[@]} -eq 0 ]; then
+            echo "No solutions found in ${BASE_PATH}"
+            echo "has_changes=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          
+          echo "Total solutions discovered: ${#SOLS[@]}"
+          echo ""
+          
+          : > changed_solutions.txt
+          
+          for entry in "${SOLS[@]}"; do
+            IFS='|' read -r KEY ROOT FILE <<<"$entry"
+            
+            # All changed files under the root
+            CHANGED=$(git diff --name-only "$BEFORE" "$AFTER" -- "$ROOT" || true)
+            
+            if [ -z "$CHANGED" ]; then
+              if [ "$FORCE_UPDATE" = "true" ]; then
+                echo "${KEY}|${ROOT}|${FILE}" >> changed_solutions.txt
+                echo "Forced add (no changes): ${KEY}"
+              else
+                echo "No changes in ${ROOT}; skip ${KEY}"
+              fi
+              continue
+            fi
+            
+            # Remove Solution.xml from consideration (loop prevention)
+            CHANGED_NO_SOL=$(printf "%s\n" "$CHANGED" | grep -v -E "^${FILE//\./\\.}$" || true)
+            
+            if [ -n "$CHANGED_NO_SOL" ]; then
+              echo "${KEY}|${ROOT}|${FILE}" >> changed_solutions.txt
+              echo "Detected relevant changes in ${ROOT}: ${KEY}"
+            else
+              if [ "$FORCE_UPDATE" = "true" ]; then
+                echo "${KEY}|${ROOT}|${FILE}" >> changed_solutions.txt
+                echo "Only Solution.xml changed – forced add: ${KEY}"
+              else
+                echo "Only ${FILE} changed -> skip ${KEY} (loop prevention)"
+              fi
+            fi
+          done
+          
+          if [ ! -s changed_solutions.txt ]; then
+            echo "No relevant changes and no forced update – exiting."
+            echo "has_changes=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          
+          echo ""
+          echo "=== Solutions to process ==="
+          cat changed_solutions.txt
+          echo "has_changes=true" >> "$GITHUB_OUTPUT"
+
+      - name: Cancel workflow run (no relevant changes)
+        if: steps.detect.outputs.has_changes == 'false'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const run_id = process.env.GITHUB_RUN_ID;
+            core.info(`Cancelling current workflow run: ${run_id}`);
+            await github.rest.actions.cancelWorkflowRun({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              run_id
+            });
+            core.setFailed('Cancelled: No relevant changes detected.')
+
+      - name: Bump versions for all changed solutions
+        if: steps.detect.outputs.has_changes == 'true'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          
+          $DATEUTC = (Get-Date).ToUniversalTime().ToString("yyyyMMdd")
+          $RUNNUMBER = "${{ env.RUN_NUMBER }}"
+          $third = $DATEUTC
+          $fourth = $RUNNUMBER
+          
+          $files = Get-Content -Path "changed_solutions.txt" | ForEach-Object {
+            $parts = $_.Split("|")
+            $parts[2]
+          }
+          
+          if (-not $files -or $files.Count -eq 0) {
+            Write-Host "No solution files to bump."
+            exit 0
+          }
+          
+          foreach ($file in $files) {
+            Write-Host ("Processing: {0}" -f $file)
+            if (-not (Test-Path -Path $file)) {
+              throw ("File not found: {0}" -f $file)
+            }
+            
+            [xml]$xml = Get-Content -Path $file -Raw
+            $versionNode = $xml.SelectSingleNode("//Version")
+            
+            if ($null -eq $versionNode) {
+              throw ("No <Version> tag in {0}" -f $file)
+            }
+            
+            if (-not $versionNode.InnerText) {
+              throw ("Empty <Version> content in {0}" -f $file)
+            }
+            
+            $parts = $versionNode.InnerText.Trim() -split '\.'
+            if ($parts.Count -lt 2) {
+              throw ("Invalid version format in {0}: '{1}'" -f $file, $versionNode.InnerText)
+            }
+            
+            $major = $parts[0]
+            $minor = $parts[1]
+            $oldText = $versionNode.InnerText
+            $newText = "{0}.{1}.{2}.{3}" -f $major, $minor, $third, $fourth
+            
+            $versionNode.InnerText = $newText
+            Write-Host ("Updating {0}: {1} -> {2}" -f $file, $oldText, $newText)
+            
+            $settings = New-Object System.Xml.XmlWriterSettings
+            $settings.Indent = $true
+            $settings.Encoding = New-Object System.Text.UTF8Encoding($false)
+            
+            $writer = [System.Xml.XmlWriter]::Create($file, $settings)
+            try { $xml.Save($writer) } finally { $writer.Close() }
+          }
+
+      - name: Abort if nothing changed after bump
+        if: steps.detect.outputs.has_changes == 'true'
+        run: |
+          set -euo pipefail
+          if git diff --quiet; then
+            echo "No changes to Solution.xml files – nothing to create PR for."
+            exit 0
+          fi
+
+      - name: Prepare combined commit & branch
+        if: steps.detect.outputs.has_changes == 'true'
+        run: |
+          set -euo pipefail
+          
+          BRANCH="chore/auto-version-${{ env.RUN_NUMBER }}"
+          
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git checkout -b "$BRANCH"
+          
+          while IFS='|' read -r KEY ROOT FILE; do
+            [ -z "$KEY" ] && continue
+            git add "$FILE"
+          done < changed_solutions.txt
+          
+          git commit -m "chore: auto-update solution versions (combined) [skip ci]"
+          git push -u origin "$BRANCH"
+
+      - name: Create combined Pull Request
+        if: steps.detect.outputs.has_changes == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.PR_TOKEN }}
+        run: |
+          set -euo pipefail
+          
+          BRANCH="chore/auto-version-${{ env.RUN_NUMBER }}"
+          
+          if gh pr list --head "$BRANCH" --state open --json number --jq 'length' | grep -q '1'; then
+            echo "PR already exists for $BRANCH – skipping creation."
+            exit 0
+          fi
+          
+          echo "This PR updates the <Version> tags in the following files:" > pr_body.md
+          echo "" >> pr_body.md
+          
+          while IFS='|' read -r KEY ROOT FILE; do
+            [ -z "$KEY" ] && continue
+            echo "- \`$FILE\` (${KEY})" >> pr_body.md
+          done < changed_solutions.txt
+          
+          echo "" >> pr_body.md
+          echo "Trigger Commit: ${{ github.sha }}" >> pr_body.md
+          
+          gh pr create \
+            --title "chore: auto-update solution versions (combined)" \
+            --body-file pr_body.md \
+            --head "$BRANCH" \
+            --base "main"
+
+      - name: Enable Auto-Merge (rebase) and delete branch
+        if: steps.detect.outputs.has_changes == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.PR_TOKEN }}
+        run: |
+          set -euo pipefail
+          
+          BRANCH="chore/auto-version-${{ env.RUN_NUMBER }}"
+          PR_NUMBER="$(gh pr view "$BRANCH" --json number --jq '.number')"
+          
+          echo "Enabling auto-merge for PR #$PR_NUMBER"
+          
+          set +e
+          OUT="$(gh pr merge "$PR_NUMBER" --auto --rebase --delete-branch 2>&1)"
+          RC=$?
+          set -e
+          
+          if [[ $RC -ne 0 ]]; then
+            echo "$OUT"
+            if grep -q "Pull request is in clean status (enablePullRequestAutoMerge)" <<<"$OUT"; then
+                echo "PR is CLEAN – merge directly without --auto."
+                gh pr merge "$PR_NUMBER" --rebase --delete-branch
+              else
+                echo "Merge failed for another reason."
+                exit $RC
+              fi
+          fi

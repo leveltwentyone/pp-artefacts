@@ -1,0 +1,18 @@
+{
+  "solutions": [
+    {
+      "name": "ProjectSolution",
+      "path": "Solutions/ProjectSolutions/ProjectSolution",
+      "deployment_settings": {
+        "TEST":  "Solutions/Configuration/deploymentsettings_TEST.projectsolution.json"
+      }
+    },
+    {
+      "name": "SecondSolution",
+      "path": "Solutions/ProjectSolutions/SecondSolution",
+      "deployment_settings": {
+        "TEST":  "Solutions/Configuration/deploymentsettings_TEST.secondsolution.json"
+      }
+    }
+  ]
+}

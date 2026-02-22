@@ -1,0 +1,20 @@
+{
+    "EnvironmentVariables": [
+      {
+        "SchemaName": "lvl_envurl",
+        "Value": "lvl-test"
+      }
+    ],
+    "ConnectionReferences": [
+      {
+        "LogicalName": "lvl_sharedcommondataserviceforapps_af0b2",
+        "ConnectionId": "a3c53add50d74be5ba2dfab715066550",
+        "ConnectorId": "/providers/Microsoft.PowerApps/apis/shared_commondataserviceforapps"
+      },
+      {
+        "LogicalName": "lvl_sharedoffice365_12560",
+        "ConnectionId": "113d4fbb86884973bda95d721598f3b2",
+        "ConnectorId": "/providers/Microsoft.PowerApps/apis/shared_office365"
+      }
+    ]
+  }
